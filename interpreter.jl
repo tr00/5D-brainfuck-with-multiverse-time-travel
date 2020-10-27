@@ -1,8 +1,4 @@
-struct Token
-    rep::Symbol
-    val::Any
-    Token(rep::Symbol, val::Any = 0x1) = new(rep, val)
-end
+struct EOF <: Exception end
 
 function error(msg)
     printstyled("error: ", msg, '\n', color=:red)
@@ -16,7 +12,7 @@ function assert()
     length(ARGS) < 1 && error("missing source file.\nusage: julia interpreter.jl src.5dbfwmtt")
     !isfile(ARGS[1]) && error("given source file is not a valid file")
     if !endswith(ARGS[1], ".5dbfwmtt")
-        endswith(ARGS[1], "bf") || printstyled("warning: source file is not a .5dbfwmtt file", color=:red)
+        endswith(ARGS[1], ".bf") || printstyled("warning: source file is not a .5dbfwmtt file", color=:red)
     end
     src = open(f -> [read(f, String)...], ARGS[1], "r")
     brackets = 0
@@ -50,18 +46,18 @@ function lexer(src::Vector{Char})
     d = Dict('>'=>:move,'<'=>:back,'+'=>:incr,'-'=>:decr,'.'=>:putc,','=>:getc,'['=>:loop,']'=>:goto,
     # 5D + time travel extension
     '~'=>:time,'('=>:copy,')'=>:kill,'v'=>:next,'^'=>:prev)
-    res = Token[]
+    res = Symbol[]
     k = 1
     while k ≤ length(src)
         p = src[k]
         if p === '#'
             k = something(findnext(isequal('\n'), src, k), length(src))
         elseif p ∈ "><+-.,[]~()v^"
-            push!(res, Token(d[p]))
+            push!(res, d[p])
         end
         k += 1
     end
-    return push!(res, Token(:eof))
+    return push!(res, :eof)
 end
 
 """
@@ -84,15 +80,13 @@ end
 """
 snapshot(tl::Timeline) = push!(tl.history, Dict([cell => tl.tape[cell] for cell in tl.memory_pointers]))
 
-struct EOF <: Exception end
-
 # using a ton of dot broadcasting in the following code.
 # makes some harder to read. my apologies
 
 """
     Move all memory pointers in this timeline 1 cell to the right.
 """
-function move()
+function move(tl, tl_pointer, timelines)
     # moving all memory_pointers by b (b should be 1)
     tl.memory_pointers .+= 1
     # initializing cells to zero (if they have no value)
@@ -103,7 +97,7 @@ end
     Move all memory pointers in this timeline 1 cell to the left.
     (note that bf interpreters usually start pointing at the leftmost cell)
 """
-function back()
+function back(tl, tl_pointer, timelines)
     tl.memory_pointers .-= 1
     get!.(Ref(tl.tape), tl.memory_pointers, 0x0)
 end
@@ -111,7 +105,7 @@ end
 """
     Increment all cells pointed to in this timeline.
 """
-function incr()
+function incr(tl, tl_pointer, timelines)
     snapshot(tl)
     (cell -> tl.tape[cell] += 0x1).(tl.memory_pointers)
 end
@@ -119,7 +113,7 @@ end
 """
     Decrement all cells pointed to in this timeline.
 """
-function decr()
+function decr(tl, tl_pointer, timelines)
     snapshot(tl)
     (cell -> tl.tape[cell] -= 0x1).(tl.memory_pointers)
 end
@@ -128,7 +122,7 @@ end
     Output a character for all cells pointed to in this timeline.
     (using ascii encoding)
 """
-function putc()
+function putc(tl, tl_pointer, timelines)
     # alt: print(Char(tl.tape[tl.memory_pointers])^b)
     # but idk if that does what its supposed to do
     print.(Char.(get.(Ref(tl.tape), tl.memory_pointers, nothing)))
@@ -140,7 +134,7 @@ end
 """
     Input a character and store it in all cells pointed to in this timeline.
 """
-function getc()
+function getc(tl, tl_pointer, timelines)
     snapshot(tl)
     # value = read(stdin, UInt8)
     setindex!.(Ref(tl.tape), read(stdin, UInt8), tl.memory_pointers)
@@ -149,11 +143,11 @@ end
 """
     Move this instruction pointer to the matching ] if all cells pointed to in this timeline are 0.
 """
-function loop()
+function loop(tl, tl_pointer, timelines)
     if all([tl.tape[cell] == 0 for cell in tl.memory_pointers])
         loop_count = 1
         while loop_count ≥ 1
-            loop_count += (src[tl.instruction_pointer += 1].rep === :loop) - (src[tl.instruction_pointer].rep === :goto)
+            loop_count += (src[tl.instruction_pointer += 1] === :loop) - (src[tl.instruction_pointer] === :goto)
         end
     else
         push!(tl.loops, tl.instruction_pointer)
@@ -163,7 +157,7 @@ end
 """
     Move this instruction pointer back to the matching [ if any cells pointed to in this timeline are nonzero.
 """
-function goto() 
+function goto(tl, tl_pointer, timelines) 
     if any([tl.tape[cell] ≠ 0 for cell ∈ tl.memory_pointers])
         tl.instruction_pointer = last(tl.loops)
     else
@@ -174,7 +168,7 @@ end
 """
     Rewind the current tape back in time by 1 step.
 """
-time() = merge!(tl.tape, pop!([Dict(), tl.history...]))
+time(tl, tl_pointer, timelines) = merge!(tl.tape, pop!([Dict(), tl.history...]))
 
 """
     Spawn a parallel timeline below the current timeline, with a copy of the tape and all pointers in it.
@@ -182,12 +176,12 @@ time() = merge!(tl.tape, pop!([Dict(), tl.history...]))
     Spawn a new instruction pointer within the newly spawned timeline,
     beginning execution immediately after this instruction.
 """
-function copy()
+function copy(tl, tl_pointer, timelines)
     ntl = deepcopy(tl)
     ntl.instruction_pointer += 1
     loop_count = 1
     while loop_count ≥ 1
-        loop_count += (src[tl.instruction_pointer += 1].rep === :copy) - (src[tl.instruction_pointer].rep === :kill)
+        loop_count += (src[tl.instruction_pointer += 1] === :copy) - (src[tl.instruction_pointer] === :kill)
     end
     push!(timelines, ntl)
 end
@@ -197,12 +191,12 @@ end
     kill this timeline and all the memory/instruction pointers currently in it.
     Otherwise, do nothing.
 """
-kill() = tl_pointer ≠ 1 ? popat!(timelines, tl_pointer) : nothing
+kill(tl, tl_pointer, timelines) = tl_pointer ≠ 1 ? popat!(timelines, tl_pointer) : nothing
 
 """
     Move all memory pointers in this timeline to the same location in the next ("lower") parallel universe.
 """
-function next()
+function next(tl, tl_pointer, timelines)
     tl_pointer == length(timelines) && return
     append!(timelines[tl_pointer + 1].memory_pointers, tl.memory_pointers)
     tl.memory_pointers = Int[]
@@ -211,7 +205,7 @@ end
 """
     Move all memory pointers in this timeline to the same location in the previous ("higher") parallel universe.
 """
-function prev()
+function prev(tl, tl_pointer, timelines)
     tl_pointer == 1 && return
     append!(timelines[tl_pointer - 1].memory_pointers, tl.memory_pointers)
     tl.memory_pointers = Int[]
@@ -220,28 +214,27 @@ end
 """
     Do nothing
 """
-noop() = nothing
+noop(tl, tl_pointer, timelines) = nothing
 
 """
     Throw an EOF exception and thus end this program if the current timeline is
     the main timeline. Otherwise it terminates the timeline
 """
-eof() = tl_pointer == 1 ? throw(EOF()) : popat!(timelines, tl_pointer)
+eof(tl, tl_pointer, timelines) = tl_pointer == 1 ? throw(EOF()) : popat!(timelines, tl_pointer)
 
-function interpret(_src::Vector{Token})
-    # forgive me for using so many globals
-    # ik it hurts the compiler & its optimization.
-    # I might fix it later or add type annotations to mark them const
-    global timelines = Timeline[Timeline()]
-    global src = _src
+function interpret(_src::Vector{Symbol})
+    timelines = Timeline[Timeline()]
+    # its just one global and this is one is typeconst
+    global src = _src::Vector{Symbol}
     while true # program ends when the main timeline throws EOF()
         global tl_pointer = 1
         while tl_pointer ≤ length(timelines)
-            global tl = timelines[tl_pointer]
-            global g = src[tl.instruction_pointer]
-            global b = g.val
+            tl = timelines[tl_pointer]
             try
-                eval(g.rep)()
+                # Symbols are the type of variable- & functionnames in julia 
+                # here we evaluate the symbol and call the prior defined method
+                # which corresponds to the symbol
+                eval(src[tl.instruction_pointer])(tl, tl_pointer, timelines)
             catch e
                 if e isa EOF
                     println()
