@@ -1,3 +1,5 @@
+const debug = in("--debug", ARGS)
+
 struct EOF <: Exception end
 
 function error(msg)
@@ -20,12 +22,7 @@ function assert()
     pointer = 0
     while pointer < length(src) 
         # I could scan for this during runtime but since ([)] is a thing
-        # I cant be bothered to backtrack loops skipped when jumping to ')'
-        # Might cause bugs & errors but we'll see (half an hour later...)
-        # Yes it does, assume the following code:
-        # +[(]) ([)]
-        # this program thinks the last closing bracket matches the first opening bracket
-        # pls remind me to fix that
+        # I might as well check it in general here idc about perfomance at this point
         brackets += (src[pointer += 1] === '[') - (src[pointer] === ']')
         brackets < 0 && error("mismatching brackets")
         parenthesis += (src[pointer] === '(') - (src[pointer] === ')')
@@ -125,6 +122,7 @@ end
 function putc(tl, tl_pointer, timelines)
     # alt: print(Char(tl.tape[tl.memory_pointers])^b)
     # but idk if that does what its supposed to do
+    debug && println("TL$tl_pointer putc.($(get.(Ref(tl.tape), tl.memory_pointers, nothing)))")
     print.(Char.(get.(Ref(tl.tape), tl.memory_pointers, nothing)))
     # for cell in tl.memory_pointers
     #     print(Char(tl.tape[cell]))
@@ -159,16 +157,21 @@ end
 """
 function goto(tl, tl_pointer, timelines) 
     if any([tl.tape[cell] ≠ 0 for cell ∈ tl.memory_pointers])
+        debug && println("TL$tl_pointer goto $(last(tl.loops))")
         tl.instruction_pointer = last(tl.loops)
     else
-        length(tl.loops) > 0 ? pop!(tl.loops) : nothing
+        debug && println("TL$tl_pointer leaving the loop")
+        length(tl.loops) > 0 && pop!(tl.loops)
     end
 end
 
 """
     Rewind the current tape back in time by 1 step.
 """
-time(tl, tl_pointer, timelines) = merge!(tl.tape, pop!([Dict(), tl.history...]))
+function time(tl, tl_pointer, timelines)
+    merge!(tl.tape, pop!(tl.history))
+    debug && println("TL$tl_pointer $(tl.tape)")
+end
 
 """
     Spawn a parallel timeline below the current timeline, with a copy of the tape and all pointers in it.
@@ -176,12 +179,17 @@ time(tl, tl_pointer, timelines) = merge!(tl.tape, pop!([Dict(), tl.history...]))
     Spawn a new instruction pointer within the newly spawned timeline,
     beginning execution immediately after this instruction.
 """
-function copy(tl, tl_pointer, timelines)
+function copy(tl, tl_pointer, timelines) # +[(]) ([)]
     ntl = deepcopy(tl)
     ntl.instruction_pointer += 1
     loop_count = 1
     while loop_count ≥ 1
         loop_count += (src[tl.instruction_pointer += 1] === :copy) - (src[tl.instruction_pointer] === :kill)
+        if src[tl.instruction_pointer] === :goto
+            pop!(tl.loops)
+        elseif src[tl.instruction_pointer] === :loop
+            push!(tl.loops, tl.instruction_pointer)
+        end
     end
     push!(timelines, ntl)
 end
@@ -191,14 +199,19 @@ end
     kill this timeline and all the memory/instruction pointers currently in it.
     Otherwise, do nothing.
 """
-kill(tl, tl_pointer, timelines) = tl_pointer ≠ 1 ? popat!(timelines, tl_pointer) : nothing
+function kill(tl, tl_pointer, timelines)
+    if tl_pointer ≠ 1
+        popat!(timelines, tl_pointer)
+    else 
+        nothing
+    end
+end
 
 """
     Move all memory pointers in this timeline to the same location in the next ("lower") parallel universe.
 """
 function next(tl, tl_pointer, timelines)
-    tl_pointer == length(timelines) && return
-    append!(timelines[tl_pointer + 1].memory_pointers, tl.memory_pointers)
+    tl_pointer ≠ length(timelines) && append!(timelines[tl_pointer + 1].memory_pointers, tl.memory_pointers)
     tl.memory_pointers = Int[]
 end
 
@@ -206,8 +219,7 @@ end
     Move all memory pointers in this timeline to the same location in the previous ("higher") parallel universe.
 """
 function prev(tl, tl_pointer, timelines)
-    tl_pointer == 1 && return
-    append!(timelines[tl_pointer - 1].memory_pointers, tl.memory_pointers)
+    tl_pointer ≠ 1 && append!(timelines[tl_pointer - 1].memory_pointers, tl.memory_pointers)
     tl.memory_pointers = Int[]
 end
 
