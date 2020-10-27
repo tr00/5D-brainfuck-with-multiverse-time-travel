@@ -1,5 +1,3 @@
-const debug = in("--debug", ARGS)
-
 struct EOF <: Exception end
 
 function error(msg)
@@ -119,22 +117,13 @@ end
     Output a character for all cells pointed to in this timeline.
     (using ascii encoding)
 """
-function putc(tl, tl_pointer, timelines)
-    # alt: print(Char(tl.tape[tl.memory_pointers])^b)
-    # but idk if that does what its supposed to do
-    debug && println("TL$tl_pointer putc.($(get.(Ref(tl.tape), tl.memory_pointers, nothing)))")
-    print.(Char.(get.(Ref(tl.tape), tl.memory_pointers, nothing)))
-    # for cell in tl.memory_pointers
-    #     print(Char(tl.tape[cell]))
-    # end
-end
+putc(tl, tl_pointer, timelines) = print.(Char.(get.(Ref(tl.tape), tl.memory_pointers, nothing)))
 
 """
     Input a character and store it in all cells pointed to in this timeline.
 """
 function getc(tl, tl_pointer, timelines)
     snapshot(tl)
-    # value = read(stdin, UInt8)
     setindex!.(Ref(tl.tape), read(stdin, UInt8), tl.memory_pointers)
 end
 
@@ -157,10 +146,8 @@ end
 """
 function goto(tl, tl_pointer, timelines) 
     if any([tl.tape[cell] ≠ 0 for cell ∈ tl.memory_pointers])
-        debug && println("TL$tl_pointer goto $(last(tl.loops))")
         tl.instruction_pointer = last(tl.loops)
     else
-        debug && println("TL$tl_pointer leaving the loop")
         length(tl.loops) > 0 && pop!(tl.loops)
     end
 end
@@ -170,7 +157,6 @@ end
 """
 function time(tl, tl_pointer, timelines)
     merge!(tl.tape, pop!(tl.history))
-    debug && println("TL$tl_pointer $(tl.tape)")
 end
 
 """
@@ -239,7 +225,7 @@ function interpret(_src::Vector{Symbol})
     # its just one global and this is one is typeconst
     global src = _src::Vector{Symbol}
     while true # program ends when the main timeline throws EOF()
-        global tl_pointer = 1
+        tl_pointer = 1
         while tl_pointer ≤ length(timelines)
             tl = timelines[tl_pointer]
             try
