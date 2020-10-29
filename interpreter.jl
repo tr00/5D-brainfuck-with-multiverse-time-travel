@@ -92,7 +92,7 @@ end
     (using ascii encoding)
 """
 function putc(tl, tl_pointer, timelines, token)
-    print.(Char.(getindex.(Ref(tl.tape), tl.memory_pointers)::UInt8))
+    print.(Char.(getindex.(Ref(tl.tape), tl.memory_pointers)::Vector{UInt8}))
 end
 
 """
