@@ -156,8 +156,10 @@ end
     Move all memory pointers in this timeline to the same location in the next ("lower") parallel universe.
 """
 function next(tl, tl_pointer, timelines, token)
-    tl_pointer ≠ length(timelines) && append!(timelines[tl_pointer + 1].memory_pointers, tl.memory_pointers)
-    get!.(Ref(timelines[tl_pointer + 1].tape), tl.memory_pointers, 0x0)
+    if tl_pointer ≠ length(timelines)
+        append!(timelines[tl_pointer + 1].memory_pointers, tl.memory_pointers)
+        get!.(Ref(timelines[tl_pointer + 1].tape), tl.memory_pointers, 0x0)
+    end
     tl.memory_pointers = Int[]
 end
 
@@ -165,9 +167,10 @@ end
     Move all memory pointers in this timeline to the same location in the previous ("higher") parallel universe.
 """
 function prev(tl, tl_pointer, timelines, token)
-    tl_pointer ≠ 1 && append!(timelines[tl_pointer - 1].memory_pointers, tl.memory_pointers)
-    # defaulting new cells to 0
-    get!.(Ref(timelines[tl_pointer - 1].tape), tl.memory_pointers, 0x0)
+    if tl_pointer ≠ 1
+        append!(timelines[tl_pointer - 1].memory_pointers, tl.memory_pointers)
+        get!.(Ref(timelines[tl_pointer - 1].tape), tl.memory_pointers, 0x0)
+    end
     tl.memory_pointers = Int[]
 end
 
@@ -203,21 +206,17 @@ function lexer(src::Vector{Char})
     # vanilla bf
     d = Dict('>'=>move,'<'=>back,'+'=>incr,'-'=>decr,'.'=>putc,','=>getc,'['=>loop,']'=>goto,
     # 5D + time travel extension
-    '~'=>time,'('=>copy,')'=>kill,'v'=>next,'^'=>prev,
-    # my personal addition
-    '@'=>wait)
+    '~'=>time,'('=>copy,')'=>kill,'v'=>next,'^'=>prev, '@'=>wait)
     R1 = Char[]
     k = one(UInt32)
-    begin # pre lexing TODO: maybe i dont need this
-        while k ≤ length(src)
-            p = src[k]
-            if p === '#'
-                k = UInt32(something(findnext(isequal('\n'), src, k), length(src)))
-            elseif p ∈ "><+-.,~v^@()[]"
-                push!(R1, p)
-            end
-            k += one(UInt32)
+    while k ≤ length(src)
+        p = src[k]
+        if p === '#'
+            k = UInt32(something(findnext(isequal('\n'), src, k), length(src)))
+        elseif p ∈ "><+-.,~v^@()[]"
+            push!(R1, p)
         end
+        k += one(UInt32)
     end
     res = Token[]
     k = one(UInt32)
@@ -238,7 +237,7 @@ function lexer(src::Vector{Char})
         elseif p === ']'
             isempty(loops) && error("unexpected closing bracket")
             push!(res, Token(goto, pop!(loops)))
-        elseif p === '(' # TODO: add mismatching check for parenthesis
+        elseif p === '('
             n = 1
             f = zero(UInt32)
             while n > 0
@@ -254,7 +253,7 @@ end
 
 function interpret(_src::Vector{Token})
     timelines = Timeline[Timeline()]
-    # its just one global and this is one is typeconst
+    # its just one global and this one is typeconst
     global src = _src::Vector{Token}
     while true # program ends when the main timeline throws EOF()
         tl_pointer = 1
@@ -277,9 +276,4 @@ function interpret(_src::Vector{Token})
     end
 end
 
-# O( i d m + 2l ) # ik 2l is irrelevant in big O but i care about it
-# i = number of instructions
-# d = depths of concurrent timelines
-# m = number of memory pointers (these get vectorized so its not that bad)
-# l = length of the input file
 (interpret ∘ lexer ∘ assert)()
