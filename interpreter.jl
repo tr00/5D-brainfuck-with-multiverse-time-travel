@@ -125,7 +125,7 @@ end
     Rewind the current tape back in time by 1 step.
 """
 function time(tl, tl_pointer, timelines, token)
-    merge!(tl.tape, pop!(tl.history))
+    length(tl.history) > 0 && merge!(tl.tape, pop!(tl.history))
 end
 
 """
@@ -157,6 +157,7 @@ end
 """
 function next(tl, tl_pointer, timelines, token)
     tl_pointer ≠ length(timelines) && append!(timelines[tl_pointer + 1].memory_pointers, tl.memory_pointers)
+    get!.(Ref(timelines[tl_pointer + 1].tape), tl.memory_pointers, 0x0)
     tl.memory_pointers = Int[]
 end
 
@@ -165,6 +166,8 @@ end
 """
 function prev(tl, tl_pointer, timelines, token)
     tl_pointer ≠ 1 && append!(timelines[tl_pointer - 1].memory_pointers, tl.memory_pointers)
+    # defaulting new cells to 0
+    get!.(Ref(timelines[tl_pointer - 1].tape), tl.memory_pointers, 0x0)
     tl.memory_pointers = Int[]
 end
 
